@@ -1,4 +1,4 @@
-package http
+package delivery
 
 import (
 	"KolinFinance/internal/domain"
@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -72,13 +73,13 @@ func (h *Handler) loggerMiddleware(next http.Handler) http.Handler {
 // это хендлер для методов add и list (добвавить и достать все)
 // они там дергаются при смене методов POST, GET
 func (h *Handler) handleTransactions(w http.ResponseWriter, r *http.Request) {
-	switch t.Method {
+	switch r.Method {
 	case http.MethodPost:
 		h.addTransaction(w, r)
 	case http.MethodGet:
-		h.getTransaction(w, r)
+		h.listTransactions(w, r)
 	default:
-		h.writeError()
+		h.writeError(w, http.StatusMethodNotAllowed, "невалидный метод")
 	}
 }
 
@@ -86,6 +87,21 @@ func (h *Handler) handleTransactions(w http.ResponseWriter, r *http.Request) {
 // также зависит от выбраного метода
 func (h *Handler) handleTransactionsByID(w http.ResponseWriter, r *http.Request) {
 
+	// вручную достаём id из пути: /transactions/42 → "42"
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 2 {
+		h.writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getTransaction(w, r, parts[1])
+	case http.MethodDelete:
+		h.deleteTransaction(w, r, parts[1])
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "невалидный метод")
+	}
 }
 
 // -----------------------------------------------------------------------
@@ -213,19 +229,21 @@ func (h *Handler) getBalance(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]float64{"balance": balance})
 }
 
+// тут нужно будет задавать  query параметры для того чтобы получить данные
+// http://localhost:8080/report/period?from=2024-01-01&to=2024-12-31 - такого плана
 func (h *Handler) getReportByPeriod(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "неподходящий метод")
 		return
 	}
 
-	from, err := parseDate(r.URL.Query().Get("from"))
+	from, err := parseDate(r.URL.Query().Get("from")) // тут ищет параметр from
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "невалидная дата ОТ, используй ГГГГ-ММ-ДД")
 		return
 	}
 
-	to, err := parseDate(r.URL.Query().Get("to"))
+	to, err := parseDate(r.URL.Query().Get("to")) //тут параметр to
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "невалидная дата ДО, используй ГГГГ-ММ-ДД")
 		return

@@ -14,6 +14,8 @@ type reportUsecase struct {
 	log  *logger.Logger
 }
 
+// все тоже самое что и в транзакциях_юк, это методы для отчетов юзкейса, также имеют в себе
+// части интерфейса из репозитория, потому что трогают бд
 func NewReportUsecase(repo ports.TransactionRepository, log *logger.Logger) ports.ReportUseCase {
 	return &reportUsecase{repo: repo, log: log}
 }
@@ -38,7 +40,6 @@ func (uc *reportUsecase) Balance(ctx context.Context) (float64, error) {
 	return balance, nil
 }
 
-// эту хотел мокнуть, но просто пастнул
 func (uc *reportUsecase) ReportByPeriod(ctx context.Context, from, to time.Time) (ports.Report, error) {
 	if from.After(to) {
 		return ports.Report{}, fmt.Errorf("invalid period: from %v is after to %v", from, to)
