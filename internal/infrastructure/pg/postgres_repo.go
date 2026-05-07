@@ -1,4 +1,4 @@
-//методы КРУД для транзакций
+//методы круд для транзакций
 
 package pg
 
@@ -47,7 +47,7 @@ func (r *postgresRepo) Save(ctx context.Context, tx domain.Transaction) (domain.
 	return tx, nil
 }
 
-func (r *postgresRepo) FindById(ctx context.Context, id int64) (domain.Transaction, error) {
+func (r *postgresRepo) FindByID(ctx context.Context, id int64) (domain.Transaction, error) {
 	query := `
         SELECT id, type, amount, category, date, note
         FROM transactions
