@@ -104,7 +104,7 @@ func (h *Handler) handleTransactionsByID(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// -----------------------------------------------------------------------
+// ---------------------DTO--------------------------------------------------
 // тут уже подхендлеры (методы)
 
 // структура для приема запроса с от клиента, формат должен быть такой
@@ -117,6 +117,8 @@ type addTransactionRequest struct {
 	Date     *time.Time      `json: "date"`
 	Note     string          `json: "note"`
 }
+
+//-----------------------------------------------------------------------
 
 // метод POST
 func (h *Handler) addTransaction(w http.ResponseWriter, r *http.Request) {
