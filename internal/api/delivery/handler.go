@@ -4,12 +4,12 @@ import (
 	"KolinFinance/internal/domain"
 	"KolinFinance/internal/pkg/logger"
 	"KolinFinance/internal/ports"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 type ServerConfig struct {
@@ -28,86 +28,75 @@ func NewHandler(txUC ports.TransactionUsecase, reportUC ports.ReportUseCase, log
 }
 
 //-----------------------------------------------------------------------
+//Что конкретно gin берёт на себя по сравнению с тем что ты уже написал руками:
+// роутинг по методу — не нужен switch r.Method
+// URL параметры — не нужен strings.Split(r.URL.Path, "/")
+// c.ShouldBindJSON — валидация через теги вместо голого json.Decode
+// логгер уже встроен — не нужен свой middleware для базового логирования
 
 // тот самый роутер на http/net
-func (h *Handler) Router() http.Handler {
-	// 	создается роутер (мультиплексор (multiplexer - поэтому mux))
-	// он хранит таблицу с подключаниями
-	mux := http.NewServeMux()
+func (h *Handler) Router() *gin.Engine {
+	//создается роутер
+	r := gin.New()
+	//ловит панику вместо краша, возвращает 500
+	r.Use(gin.Recovery())
+	//логгирует каждый запрос
+	r.Use(h.loggerMiddleware())
 
-	//	это регистрация маршрута в роутере
-	//	logger- обертка для логгирования
-	//	http.HandleFunc оборачивает функцию чтобы она реализовывала интерфейс
-	//  		http.Handler, ведь мукс принимает только его, у котороего есть метод ServeHTTP
+	//создаем группы
+	//Параметр :id: Gin извлекает его и кладёт в c.Param("id").
+	tx := r.Group("/transactions")
+	{
+		tx.POST("/", h.addTransaction)
+		tx.GET("/", h.listTransactions)
+		tx.GET("/:id", h.getTransaction)
+		tx.DELETE("/:id", h.deleteTransaction)
+	}
 
-	mux.Handle("/transactions", h.loggerMiddleware(http.HandlerFunc(h.handleTransactions)))
-	mux.Handle("/transactions/", h.loggerMiddleware(http.HandlerFunc(h.handleTransactionsByID)))
-	mux.Handle("/report/balance", h.loggerMiddleware(http.HandlerFunc(h.getBalance)))
-	mux.Handle("/report/period", h.loggerMiddleware(http.HandlerFunc(h.getReportByPeriod)))
+	report := r.Group("/report")
+	{
+		report.GET("/balance", h.getBalance)
+		report.GET("/period", h.getReportByPeriod)
+	}
 
-	// передаем настроеный роутер туда где будем запускать сервак
-	return mux
+	return r
 }
 
 // -----------------------------------------------------------------------
-// middlewarчик , в нем логгер
-// next - это следующий обработчик в запросе
-func (h *Handler) loggerMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		//тут он вызывает нашу следующую функцию хендлер
-		next.ServeHTTP(w, r)
+// короче, gin хранит функции в слайсе, и с помощью функции c.Next,
+//проходит по нему и вызывает всех по очереди
+
+func (h *Handler) loggerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next() //здесь вызывается след функция в цепочке
 		h.log.Info("request",
-			"method", r.Method,
-			"path", r.URL.Path)
-	})
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status())
 
-}
-
-//последовательность при вызове функции логгера
-// 1. Приходит запрос на /transactions
-// 2. mux вызывает loggerMiddleware (первым в цепочке)
-// 3. loggerMiddleware логирует? НЕТ, сначала вызывает next!
-// 4. next — это (основной хендлер)
-//    - Он обрабатывает запрос, формирует ответ
-// 5. Управление возвращается в loggerMiddleware
-// 6. Логируем: метод, путь, статус (в этом примере без статуса)
-// 7. Ответ отправляется клиенту
-
-//-----------------------------------------------------------------------
-
-// это хендлер для методов add и list (добвавить и достать все)
-// они там дергаются при смене методов POST, GET
-func (h *Handler) handleTransactions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		h.addTransaction(w, r)
-	case http.MethodGet:
-		h.listTransactions(w, r)
-	default:
-		h.writeError(w, http.StatusMethodNotAllowed, "невалидный метод")
 	}
 }
 
-// этот для методов get и delete (все что по айдишнику)
-// также зависит от выбраного метода
-func (h *Handler) handleTransactionsByID(w http.ResponseWriter, r *http.Request) {
+// Начало: index = -1
 
-	// вручную достаём id из пути: /transactions/42 → "42"
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 2 {
-		h.writeError(w, http.StatusNotFound, "not found")
-		return
-	}
+// 1. Gin вызывает loggerMiddleware:
+//    - index = 0 (указывает на loggerMiddleware)
+//    - выполняется код ДО c.Next()
 
-	switch r.Method {
-	case http.MethodGet:
-		h.getTransaction(w, r, parts[1])
-	case http.MethodDelete:
-		h.deleteTransaction(w, r, parts[1])
-	default:
-		h.writeError(w, http.StatusMethodNotAllowed, "невалидный метод")
-	}
-}
+// 2. loggerMiddleware вызывает c.Next():
+//    - index++ → index = 1
+//    - вызывает addTransaction (следующий в списке)
+
+// 3. addTransaction выполняется:
+//    - устанавливает статус 201
+//    - пишет JSON
+//    - завершается
+
+// 4. Возврат в loggerMiddleware:
+//    - продолжает выполнение ПОСЛЕ c.Next()
+//    - логирует статус 201
+
+// 5. Завершение
 
 // ---------------------DTO--------------------------------------------------
 // тут уже подхендлеры (методы)
@@ -116,7 +105,7 @@ func (h *Handler) handleTransactionsByID(w http.ResponseWriter, r *http.Request)
 // указатель на time нужен чтобы тут мог быть нил и можно было
 // отличить переданое время от непереданого
 type addTransactionRequest struct {
-	Type     domain.Type     `json: "type`
+	Type     domain.Type     `json: "type"`
 	Amount   float64         `json: "amount"`
 	Category domain.Category `json: "category"`
 	Date     *time.Time      `json: "date"`
@@ -126,12 +115,12 @@ type addTransactionRequest struct {
 //-----------------------------------------------------------------------
 
 // метод POST
-func (h *Handler) addTransaction(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) addTransaction(c *gin.Context) {
 	var req addTransactionRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"невалидный запрос": err.Error()})
+		return //H это такое сокращение для мапы, чтобы тут не писать много
 	}
 
 	tx := domain.Transaction{
@@ -144,22 +133,23 @@ func (h *Handler) addTransaction(w http.ResponseWriter, r *http.Request) {
 		tx.Date = *req.Date
 	}
 	//передается контекст из http.Request
-	saved, err := h.txUC.Add(r.Context(), tx)
+	saved, err := h.txUC.Add(c.Request.Context(), tx)
 	if err != nil {
 		if errors.Is(err, domain.ErrIvalidAmount) ||
 			errors.Is(err, domain.ErrInvalidType) ||
 			errors.Is(err, domain.ErrInvalidCategory) {
-			h.writeError(w, http.StatusInternalServerError, "ошибка добавления транзакции")
+			c.JSON(http.StatusBadRequest, gin.H{"невалидный запрос": err.Error()})
 			return
-		}
+		} //тут не err, потому что вернуть нужно строку
+		c.JSON(http.StatusInternalServerError, gin.H{"ошибка добавления транзакции": err.Error()})
 	}
-	h.writeJSON(w, http.StatusCreated, saved)
+	c.JSON(http.StatusCreated, saved)
 
 }
 
 // GET
-func (h *Handler) listTransactions(w http.ResponseWriter, r *http.Request) {
-	txType := domain.Type(r.URL.Query().Get("type"))
+func (h *Handler) listTransactions(c *gin.Context) {
+	txType := domain.Type(c.Query("type"))
 
 	var (
 		txs []domain.Transaction
@@ -167,122 +157,102 @@ func (h *Handler) listTransactions(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if txType != "" {
-		txs, err = h.txUC.GetByType(r.Context(), txType)
+		txs, err = h.txUC.GetByType(c.Request.Context(), txType)
 	} else {
-		txs, err = h.txUC.GetAll(r.Context())
+		txs, err = h.txUC.GetAll(c.Request.Context())
 	}
 
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "ошибка получения тразакций")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка получения транзакции"})
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, txs)
+	c.JSON(http.StatusOK, txs)
+
 }
 
 // GET
-func (h *Handler) getTransaction(w http.ResponseWriter, r *http.Request, rawId string) {
-	id, err := parseID(rawId)
+func (h *Handler) getTransaction(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "невалидный id")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный запрос"})
 		return
+
 	}
 
-	tx, err := h.txUC.GetByID(r.Context(), id)
+	tx, err := h.txUC.GetByID(c.Request.Context(), id)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "ошибка получения транзакции по айди")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка получения транзы по айди"})
 		return
+
 	}
 
-	h.writeJSON(w, http.StatusOK, tx)
+	c.JSON(http.StatusOK, tx)
+
 }
 
 // DELETE
-func (h *Handler) deleteTransaction(w http.ResponseWriter, r *http.Request, rawID string) {
-	id, err := parseID(rawID)
+func (h *Handler) deleteTransaction(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "невалидный id")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный айди"})
+		return
 	}
 
-	err = h.txUC.Delete(r.Context(), id)
+	err = h.txUC.Delete(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, "транза не найдена")
+			c.JSON(http.StatusNotFound, gin.H{"error": "транзакция не найдена"})
 			return
 		} else {
-			h.writeError(w, http.StatusInternalServerError, "ошибка удаления транзакции")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка удаления транзакции"})
 			return
 		}
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 //-----------------------------------------------------------------------
 
 // report хендлеры, оба GET
-func (h *Handler) getBalance(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeError(w, http.StatusMethodNotAllowed, "неправильный метод")
-		return
-	}
-
-	balance, err := h.reportUC.Balance(r.Context())
+func (h *Handler) getBalance(c *gin.Context) {
+	balance, err := h.reportUC.Balance(c.Request.Context())
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "ошибка получения баланса")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка получения баланса"})
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]float64{"balance": balance})
+	c.JSON(http.StatusOK, gin.H{"balance": balance})
+
 }
 
 // тут нужно будет задавать  query параметры для того чтобы получить данные
 // http://localhost:8080/report/period?from=2024-01-01&to=2024-12-31 - такого плана
-func (h *Handler) getReportByPeriod(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeError(w, http.StatusMethodNotAllowed, "неподходящий метод")
-		return
-	}
-
-	from, err := parseDate(r.URL.Query().Get("from")) // тут ищет параметр from
+func (h *Handler) getReportByPeriod(c *gin.Context) {
+	from, err := parseDate(c.Query("from")) // тут ищет параметр from
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "невалидная дата ОТ, используй ГГГГ-ММ-ДД")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидная дата ОТ, используй ГГГГ-ММ-ДД"})
 		return
 	}
 
-	to, err := parseDate(r.URL.Query().Get("to")) //тут параметр to
+	to, err := parseDate(c.Query("to")) //тут параметр to
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "невалидная дата ДО, используй ГГГГ-ММ-ДД")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидная дата ДО, используй ГГГГ-ММ-ДД"})
 		return
 	}
 
-	report, err := h.reportUC.ReportByPeriod(r.Context(), from, to)
+	report, err := h.reportUC.ReportByPeriod(c.Request.Context(), from, to)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "ошибка получения отчета за период")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка получения отчета за период"})
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, report)
+	c.JSON(http.StatusOK, report)
 }
 
 //-----------------------------------------------------------------------
 //вспомогательные функции
-
-//эта кодирует ответ клиенту в джейсик
-
-func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	//эта строчка VVVVV создает кодировщик, encode кодирует данные ответа и отправляет
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		h.log.Error("ошибка кодировки ответа в джейсОн", "err", err)
-	}
-}
-
-// тут мапа потому что она парсится на (еррор: мсг) для json ответа
-func (h *Handler) writeError(w http.ResponseWriter, status int, msg string) {
-	h.writeJSON(w, status, map[string]string{"error": msg})
-}
 
 // преобразует строку в число
 func parseID(s string) (int64, error) {
