@@ -30,6 +30,8 @@ func New(cfg Config) (*App, error) {
 
 	log := logger.New(cfg.LogLevel)
 	//SQL---------------------------------------------------
+
+	//это подключение к бд, у Калькулятора это module.go
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка подключения к постгрес", "err", err)
