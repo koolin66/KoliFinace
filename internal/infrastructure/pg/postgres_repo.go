@@ -12,6 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// конфиг подключения к бд
+type Config struct {
+	Host     string `env:"HOST" default:"localhost"`
+	Port     string `env:"PORT" default:"5432"`
+	User     string `env:"USER" default:"postgres"`
+	Password string `env:"PASSWORD" default:"postgres"`
+	DBName   string `env:"NAME" default:"finance"`
+	SSLMode  string `env:"SSLMODE" default:"disable"`
+}
+
 // оберточка над пулом соединений для посгрес
 // библиотеку pgx мы можем менять на что то другое с такими же методами
 // без сложных операций

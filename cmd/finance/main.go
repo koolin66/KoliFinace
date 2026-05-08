@@ -2,7 +2,6 @@ package main
 
 import (
 	"KolinFinance/internal/app"
-	"KolinFinance/internal/pkg/logger"
 	"errors"
 	"log"
 	"net/http"
@@ -10,11 +9,11 @@ import (
 )
 
 func main() {
-	cfg := app.Config{ //string conn к postgresql ^
-		// протокол://пользователь:пароль@хост:порт/база_данных
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/finance"),
-		HTTPPort:    getEnv("HTTP_PORT", "8080"),
-		LogLevel:    logger.Level(getEnv("LOG_LEVEL", "info")),
+
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		log.Fatalf("ошибка получения конфига %v", err)
+		return
 	}
 
 	application, err := app.New(cfg)

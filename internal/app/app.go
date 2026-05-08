@@ -13,12 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Config struct {
-	DatabaseURL string
-	HTTPPort    string
-	LogLevel    logger.Level
-}
-
 type App struct {
 	server *http.Server
 	log    *logger.Logger
@@ -28,11 +22,20 @@ func New(cfg Config) (*App, error) {
 
 	//Logger--------------------------------------------------
 
-	log := logger.New(cfg.LogLevel)
+	log := logger.New(cfg.LoggerLevel)
 	//SQL---------------------------------------------------
 
-	//это подключение к бд, у Калькулятора это module.go
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	// собираю строку подключения к бд
+	dsn := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s",
+		cfg.DB.User,
+		cfg.DB.Password,
+		cfg.DB.Host,
+		cfg.DB.Port,
+		cfg.DB.DBName,
+	)
+	//это подключение к бд, у Калькулятора это
+	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка подключения к постгрес", "err", err)
 	}
@@ -66,7 +69,7 @@ func New(cfg Config) (*App, error) {
 	//http server---------------------------------------------------
 
 	server := &http.Server{
-		Addr:         ":" + cfg.HTTPPort,
+		Addr:         ":" + cfg.ServerConfig.Port,
 		Handler:      handler.Router(),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,

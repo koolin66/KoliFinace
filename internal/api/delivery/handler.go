@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+type ServerConfig struct {
+	Host string `env:"HOST" default:"0.0.0.0"`
+	Port string `env:"PORT" default:"8080"`
+}
+
 type Handler struct {
 	txUC     ports.TransactionUsecase
 	reportUC ports.ReportUseCase
