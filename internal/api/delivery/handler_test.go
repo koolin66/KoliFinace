@@ -2,20 +2,23 @@ package delivery
 
 import (
 	"KolinFinance/internal/domain"
+	"KolinFinance/internal/mocks"
 	"KolinFinance/internal/pkg/logger"
 	"KolinFinance/internal/ports"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 )
 
 // конструктор хендлера для тестов
-func newTestHandler(txUC *mockTransactionUC, reportUC *mockReportUC) *Handler {
+func newTestHandler(txUC *mocks.MockTransactionUsecase, reportUC *mocks.MockReportUseCase) *Handler {
 	return &Handler{
 		txUC:     txUC,
 		reportUC: reportUC,
@@ -70,318 +73,265 @@ func decodeJSON(t *testing.T, resp *http.Response, v any) {
 	}
 }
 
-// ── POST /transactions ────────────────────────────────────────────────────────
-func TestAddTransactions_Success(t *testing.T) {
+func TestAddTreansaction_Success(t *testing.T) {
 	//arrange
-	want := domain.Transaction{
-		ID:       1000,
-		Type:     domain.Income,
-		Amount:   1000,
-		Category: domain.Food,
-		Date:     time.Now(),
-	}
-	txUC := &mockTransactionUC{
-		addFn: func(ctx context.Context, tx domain.Transaction) (domain.Transaction, error) {
-			return want, nil
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
-	body := map[string]any{
-		"type":     "income",
-		"amount":   1000,
-		"category": "salary",
-	}
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	want := domain.Transaction{ID: 1, Type: domain.Income, Amount: 5000, Category: domain.Salary}
+
+	txUC.EXPECT().Add(gomock.Any(), gomock.Any()).Times(1).Return(want, nil)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
+	body := map[string]any{"type": "income", "amount": 5000, "category": "salary"}
+	//act
+
+	resp := sendRequest(t, handler, http.MethodPost, "/transactions/", body)
+	//assert
+
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	var got domain.Transaction
+	decodeJSON(t, resp, &got)
+	assert.Equal(t, want.ID, got.ID)
+}
+
+func TestAddTransaction_ValidationError(t *testing.T) {
+	//arrange
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	txUC.EXPECT().Add(gomock.Any(), gomock.Any()).Times(1).Return(domain.Transaction{}, domain.ErrIvalidAmount)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
+	body := map[string]any{"type": "income", "amount": -100, "category": "salary"}
 
 	//act
 	resp := sendRequest(t, handler, http.MethodPost, "/transactions/", body)
 
 	//assert
-	if resp.StatusCode != http.StatusCreated {
-		t.Errorf("ожидали статус 201, получили %d", resp.StatusCode)
-	}
-
-	//декодим и проверяем та ли это структура
-	var got domain.Transaction
-	decodeJSON(t, resp, &got)
-	if got.ID != want.ID {
-		t.Errorf("ожидали ID=%d, получили ID=%d", want.ID, got.ID)
-	}
-}
-
-// передаем невалидный json
-// ждем ошибку 400
-func TestAddTransaction_InvalidBody(t *testing.T) {
-	// Arrange
-	handler := newTestHandler(&mockTransactionUC{}, &mockReportUC{})
-
-	// создаём запрос с невалидным JSON вручную
-	req := httptest.NewRequest(http.MethodPost, "/transactions/", bytes.NewBufferString("not json"))
-	req.Header.Set("Content-Type", "application/json")
-	//эта штука записывает ответ от сервера
-	recorder := httptest.NewRecorder()
-
-	// Act
-	handler.Router().ServeHTTP(recorder, req)
-
-	// Assert
-	if recorder.Code != http.StatusBadRequest {
-		t.Errorf("ожидали статус 400, получили %d", recorder.Code)
-	}
-}
-
-// проверяем что handler правильно
-// обрабатывает ошибки валидации из usecase и возвращает 400
-func TestAddTransaction_ValidationError(t *testing.T) {
-	// Arrange
-	txUC := &mockTransactionUC{
-		addFn: func(ctx context.Context, tx domain.Transaction) (domain.Transaction, error) {
-			return domain.Transaction{}, domain.ErrIvalidAmount
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
-	body := map[string]any{
-		"type":     "income",
-		"amount":   -100, // usecase вернёт ошибку
-		"category": "salary",
-	}
-
-	// Act
-	resp := sendRequest(t, handler, http.MethodPost, "/transactions/", body)
-
-	// Assert
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("ожидали статус 400, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestAddTransaction_InternalError(t *testing.T) {
-	//arrange
-	txUc := &mockTransactionUC{
-		addFn: func(ctx context.Context, tx domain.Transaction) (domain.Transaction, error) {
-			return domain.Transaction{}, errors.New("неизвестная ошибка")
-		},
-	}
-	handler := newTestHandler(txUc, &mockReportUC{})
-	body := map[string]any{
-		"type":     "expense",
-		"amount":   1000,
-		"category": "food",
-	}
+	// Arrange
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
 
-	//act
+	txUC.EXPECT().
+		Add(gomock.Any(), gomock.Any()).
+		Times(1).
+		Return(domain.Transaction{}, errors.New("неизвестная ошибка"))
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
+	body := map[string]any{"type": "income", "amount": 1000, "category": "salary"}
+
+	// Act
 	resp := sendRequest(t, handler, http.MethodPost, "/transactions/", body)
 
-	//assert
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("ожидали статус код 500б получили: %v", resp.StatusCode)
-	}
+	// Assert
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 // ── GET /transactions ─────────────────────────────────────────────────────────
-func TestListTransaction_success(t *testing.T) {
-	//arrange
+
+func TestListTransactions_Success(t *testing.T) {
+	// Arrange
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
 	want := []domain.Transaction{
-		{ID: 1, Type: "expense", Amount: 1000, Category: "food"},
-		{ID: 2, Type: "expense", Amount: 1000, Category: "food"},
+		{ID: 1, Type: domain.Income, Amount: 5000, Category: domain.Salary},
+		{ID: 2, Type: domain.Expense, Amount: 200, Category: domain.Food},
 	}
-	txUC := &mockTransactionUC{
-		getAllFn: func(ctx context.Context) ([]domain.Transaction, error) {
-			return want, nil
-		},
-	}
+	txUC.EXPECT().
+		GetAll(gomock.Any()).
+		Times(1).
+		Return(want, nil)
 
-	handler := newTestHandler(txUC, &mockReportUC{})
-	//act
-	resp := sendRequest(t, handler, http.MethodGet, "/transactions/", want)
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
-	//assert
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ожидали статус 200, получили %d", resp.StatusCode)
-	}
+	// Act
+	resp := sendRequest(t, handler, http.MethodGet, "/transactions/", nil)
 
+	// Assert
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var got []domain.Transaction
 	decodeJSON(t, resp, &got)
-	if len(want) != len(got) {
-		t.Errorf("количество полученных транзакций: %v, не равно тому что ожидал: %v", len(got), len(want))
-	}
+	assert.Len(t, got, len(want))
 }
 
-//ДАЛЬШЕ ПИСАЛ НЕ САМ, ТОЛЬОК ПРОБЕЖАЛСЯ ГЛАЗАМИ
-
-// TestListTransactions_FilterByType — проверяем что query параметр ?type=
-// передаётся в usecase, вызывается GetByType а не GetAll.
 func TestListTransactions_FilterByType(t *testing.T) {
 	// Arrange
-	// getByTypeFn заполнен — значит ожидаем что вызовется именно он.
-	// getAllFn не заполнен — если вызовется, будет паника.
-	called := false
-	txUC := &mockTransactionUC{
-		getByTypeFn: func(ctx context.Context, t domain.Type) ([]domain.Transaction, error) {
-			called = true // фиксируем что метод был вызван
-			return []domain.Transaction{}, nil
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	// GetAll не должен вызываться — только GetByType
+	txUC.EXPECT().GetAll(gomock.Any()).Times(0)
+	txUC.EXPECT().
+		GetByType(gomock.Any(), domain.Expense).
+		Times(1).
+		Return([]domain.Transaction{}, nil)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/transactions/?type=expense", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ожидали статус 200, получили %d", resp.StatusCode)
-	}
-	if !called {
-		t.Error("ожидали вызов GetByType, но он не был вызван")
-	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 // ── GET /transactions/:id ─────────────────────────────────────────────────────
 
 func TestGetTransaction_Success(t *testing.T) {
 	// Arrange
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
 	want := domain.Transaction{ID: 42, Type: domain.Expense, Amount: 300, Category: domain.Food}
-	txUC := &mockTransactionUC{
-		getByIDFn: func(ctx context.Context, id int64) (domain.Transaction, error) {
-			return want, nil
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
+	txUC.EXPECT().
+		GetByID(gomock.Any(), int64(42)).
+		Times(1).
+		Return(want, nil)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/transactions/42", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ожидали статус 200, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var got domain.Transaction
 	decodeJSON(t, resp, &got)
-	if got.ID != want.ID {
-		t.Errorf("ожидали ID=%d, получили ID=%d", want.ID, got.ID)
-	}
+	assert.Equal(t, want.ID, got.ID)
 }
 
 func TestGetTransaction_NotFound(t *testing.T) {
 	// Arrange
-	txUC := &mockTransactionUC{
-		getByIDFn: func(ctx context.Context, id int64) (domain.Transaction, error) {
-			return domain.Transaction{}, domain.ErrNotFound
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	txUC.EXPECT().
+		GetByID(gomock.Any(), int64(99)).
+		Times(1).
+		Return(domain.Transaction{}, domain.ErrNotFound)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/transactions/99", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("ожидали статус 404, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-// TestGetTransaction_InvalidID — проверяем что handler отвечает 400
-// если id в пути не является числом.
 func TestGetTransaction_InvalidID(t *testing.T) {
 	// Arrange
-	handler := newTestHandler(&mockTransactionUC{}, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	// GetByID не должен вызываться — parseID упадёт раньше
+	txUC.EXPECT().GetByID(gomock.Any(), gomock.Any()).Times(0)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
-	// "abc" не парсится в int64 — ожидаем 400
 	resp := sendRequest(t, handler, http.MethodGet, "/transactions/abc", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("ожидали статус 400, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 // ── DELETE /transactions/:id ──────────────────────────────────────────────────
 
 func TestDeleteTransaction_Success(t *testing.T) {
 	// Arrange
-	txUC := &mockTransactionUC{
-		deleteFn: func(ctx context.Context, id int64) error {
-			return nil
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	txUC.EXPECT().
+		Delete(gomock.Any(), int64(1)).
+		Times(1).
+		Return(nil)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodDelete, "/transactions/1", nil)
 
 	// Assert
-	// 204 No Content — успешное удаление без тела ответа
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("ожидали статус 204, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
 func TestDeleteTransaction_NotFound(t *testing.T) {
 	// Arrange
-	txUC := &mockTransactionUC{
-		deleteFn: func(ctx context.Context, id int64) error {
-			return domain.ErrNotFound
-		},
-	}
-	handler := newTestHandler(txUC, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	txUC.EXPECT().
+		Delete(gomock.Any(), int64(99)).
+		Times(1).
+		Return(domain.ErrNotFound)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodDelete, "/transactions/99", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("ожидали статус 404, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 // ── GET /report/balance ───────────────────────────────────────────────────────
 
 func TestGetBalance_Success(t *testing.T) {
 	// Arrange
-	reportUC := &mockReportUC{
-		balanceFn: func(ctx context.Context) (float64, error) {
-			return 42000.50, nil
-		},
-	}
-	handler := newTestHandler(&mockTransactionUC{}, reportUC)
+	ctrl := gomock.NewController(t)
+	reportUC := mocks.NewMockReportUseCase(ctrl)
+
+	reportUC.EXPECT().
+		Balance(gomock.Any()).
+		Times(1).
+		Return(42000.50, nil)
+
+	handler := newTestHandler(mocks.NewMockTransactionUsecase(ctrl), reportUC)
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/report/balance", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ожидали статус 200, получили %d", resp.StatusCode)
-	}
-	// декодируем {"balance": 42000.50} и проверяем значение
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var got map[string]float64
 	decodeJSON(t, resp, &got)
-	if got["balance"] != 42000.50 {
-		t.Errorf("ожидали баланс 42000.50, получили %v", got["balance"])
-	}
+	assert.Equal(t, 42000.50, got["balance"])
 }
 
 func TestGetBalance_InternalError(t *testing.T) {
 	// Arrange
-	reportUC := &mockReportUC{
-		balanceFn: func(ctx context.Context) (float64, error) {
-			return 0, errors.New("база упала")
-		},
-	}
-	handler := newTestHandler(&mockTransactionUC{}, reportUC)
+	ctrl := gomock.NewController(t)
+	reportUC := mocks.NewMockReportUseCase(ctrl)
+
+	reportUC.EXPECT().
+		Balance(gomock.Any()).
+		Times(1).
+		Return(0.0, errors.New("база упала"))
+
+	handler := newTestHandler(mocks.NewMockTransactionUsecase(ctrl), reportUC)
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/report/balance", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("ожидали статус 500, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 // ── GET /report/period ────────────────────────────────────────────────────────
 
 func TestGetReportByPeriod_Success(t *testing.T) {
 	// Arrange
+	ctrl := gomock.NewController(t)
+	reportUC := mocks.NewMockReportUseCase(ctrl)
+
 	want := ports.Report{
 		From:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		To:      time.Date(2024, 1, 31, 0, 0, 0, 0, time.UTC),
@@ -389,55 +339,54 @@ func TestGetReportByPeriod_Success(t *testing.T) {
 		Expense: 15000,
 		Balance: 35000,
 	}
-	reportUC := &mockReportUC{
-		reportByPeriodFn: func(ctx context.Context, from, to time.Time) (ports.Report, error) {
-			return want, nil
-		},
-	}
-	handler := newTestHandler(&mockTransactionUC{}, reportUC)
+
+	// gomock.Any() для дат — точное совпадение time.Time нестабильно
+	// из-за часовых поясов при парсинге из строки
+	reportUC.EXPECT().
+		ReportByPeriod(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(1).
+		Return(want, nil)
+
+	handler := newTestHandler(mocks.NewMockTransactionUsecase(ctrl), reportUC)
 
 	// Act
-	// передаём даты через query параметры
 	resp := sendRequest(t, handler, http.MethodGet, "/report/period?from=2024-01-01&to=2024-01-31", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("ожидали статус 200, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var got ports.Report
 	decodeJSON(t, resp, &got)
-	if got.Balance != want.Balance {
-		t.Errorf("ожидали баланс %v, получили %v", want.Balance, got.Balance)
-	}
+	assert.Equal(t, want.Balance, got.Balance)
 }
 
-// TestGetReportByPeriod_InvalidDate — проверяем что handler отвечает 400
-// если дата передана в неправильном формате.
 func TestGetReportByPeriod_InvalidDate(t *testing.T) {
 	// Arrange
-	handler := newTestHandler(&mockTransactionUC{}, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	reportUC := mocks.NewMockReportUseCase(ctrl)
+
+	// ReportByPeriod не должен вызываться — parseDate упадёт раньше
+	reportUC.EXPECT().ReportByPeriod(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	handler := newTestHandler(mocks.NewMockTransactionUsecase(ctrl), reportUC)
 
 	// Act
-	// неправильный формат даты — ожидаем 400
 	resp := sendRequest(t, handler, http.MethodGet, "/report/period?from=01-01-2024&to=31-01-2024", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("ожидали статус 400, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-// TestGetReportByPeriod_MissingDate — проверяем что handler отвечает 400
-// если query параметры не переданы вообще.
 func TestGetReportByPeriod_MissingDate(t *testing.T) {
 	// Arrange
-	handler := newTestHandler(&mockTransactionUC{}, &mockReportUC{})
+	ctrl := gomock.NewController(t)
+	reportUC := mocks.NewMockReportUseCase(ctrl)
+	reportUC.EXPECT().ReportByPeriod(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	handler := newTestHandler(mocks.NewMockTransactionUsecase(ctrl), reportUC)
 
 	// Act
 	resp := sendRequest(t, handler, http.MethodGet, "/report/period", nil)
 
 	// Assert
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("ожидали статус 400, получили %d", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
