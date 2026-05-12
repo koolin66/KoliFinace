@@ -30,13 +30,13 @@ func (uc *transactionUsecase) Add(ctx context.Context, tx domain.Transaction) (d
 
 	if err := tx.Validate(); err != nil {
 		uc.log.Warn("транзакция не прошла валидацию", err)
-		return domain.Transaction{}, fmt.Errorf("ошибка валидации транзы", err)
+		return domain.Transaction{}, fmt.Errorf("ошибка валидации транзы %w", err)
 	}
 
 	saved, err := uc.repo.Save(ctx, tx)
 	if err != nil {
 		uc.log.Error("ошибка сохранения", err)
-		return domain.Transaction{}, fmt.Errorf("ошибка сохранения транзакции", err)
+		return domain.Transaction{}, fmt.Errorf("ошибка сохранения транзакции %w", err)
 	}
 	uc.log.Info("транзкация сохранена", "id", saved.ID)
 	return saved, nil

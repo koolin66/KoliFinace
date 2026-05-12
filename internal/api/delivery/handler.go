@@ -105,11 +105,11 @@ func (h *Handler) loggerMiddleware() gin.HandlerFunc {
 // указатель на time нужен чтобы тут мог быть нил и можно было
 // отличить переданое время от непереданого
 type addTransactionRequest struct {
-	Type     domain.Type     `json: "type"`
-	Amount   float64         `json: "amount"`
-	Category domain.Category `json: "category"`
-	Date     *time.Time      `json: "date"`
-	Note     string          `json: "note"`
+	Type     domain.Type     `json:"type"`
+	Amount   int64           `json:"amount"`
+	Category domain.Category `json:"category"`
+	Date     *time.Time      `json:"date"`
+	Note     string          `json:"note"`
 }
 
 //-----------------------------------------------------------------------
@@ -182,7 +182,7 @@ func (h *Handler) getTransaction(c *gin.Context) {
 
 	tx, err := h.txUC.GetByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка получения транзы по айди"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "ошибка получения транзы по айди"})
 		return
 
 	}
