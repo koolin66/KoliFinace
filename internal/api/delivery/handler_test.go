@@ -231,6 +231,7 @@ func TestGetTransaction_InvalidID(t *testing.T) {
 	txUC := mocks.NewMockTransactionUsecase(ctrl)
 
 	// GetByID не должен вызываться — parseID упадёт раньше
+	//times(0) проверяет что ментод не был вызван
 	txUC.EXPECT().GetByID(gomock.Any(), gomock.Any()).Times(0)
 
 	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
