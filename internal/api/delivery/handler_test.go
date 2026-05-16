@@ -93,6 +93,23 @@ func TestAddTreansaction_Success(t *testing.T) {
 	var got domain.Transaction
 	decodeJSON(t, resp, &got)
 	assert.Equal(t, want.ID, got.ID)
+
+}
+
+func TestAddTransaction_InvalidBody(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	txUC := mocks.NewMockTransactionUsecase(ctrl)
+
+	txUC.EXPECT().Add(gomock.Any(), gomock.Any()).
+		Times(0).Return(domain.Transaction{}, nil)
+
+	handler := newTestHandler(txUC, mocks.NewMockReportUseCase(ctrl))
+	body := 123
+
+	resp := sendRequest(t, handler, http.MethodPost, "/transactions/", body)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
 }
 
 func TestAddTransaction_ValidationError(t *testing.T) {
