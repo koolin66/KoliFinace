@@ -2,15 +2,21 @@ package app
 
 import (
 	"KolinFinance/internal/api/delivery"
+	"KolinFinance/internal/api/grpc"
 	"KolinFinance/internal/infrastructure/pg"
 	"KolinFinance/internal/pkg/logger"
 	"KolinFinance/internal/usecase"
+	transaction "KolinFinance/proto"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
+	"google.golang.org/grpc/reflection"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	g "google.golang.org/grpc"
 )
 
 type App struct {
@@ -66,6 +72,24 @@ func New(cfg Config) (*App, error) {
 
 	handler := delivery.NewHandler(txUC, reportUC, log)
 
+	//------gRPC server -------------------------------------------------
+	grpcHandler := grpc.NewHandler(txUC, reportUC)
+	grpcServer := g.NewServer()
+	transaction.RegisterTransactionServiceServer(grpcServer, grpcHandler)
+	reflection.Register(grpcServer)
+
+	lis, err := net.Listen("tcp", ":9090")
+	if err != nil {
+		return nil, fmt.Errorf("ошибка запуска grpc listener: %w", err)
+	}
+
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Error("grpc server error", "err", err)
+		}
+	}()
+
+	log.Info("grpc сервер запущен", "port", "9090")
 	//http server---------------------------------------------------
 
 	server := &http.Server{
